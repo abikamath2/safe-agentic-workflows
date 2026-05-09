@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #3b82f6;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* shadcn variables mapping */
+  --color-background: #0a0a0b;
+  --color-foreground: #e1e1e3;
+  --color-card: #111114;
+  --color-card-foreground: #e1e1e3;
+  --color-popover: #111114;
+  --color-popover-foreground: #e1e1e3;
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #1f1f23;
+  --color-secondary-foreground: #e1e1e3;
+  --color-muted: #1f1f23;
+  --color-muted-foreground: #8e9299;
+  --color-accent: #1f1f23;
+  --color-accent-foreground: #e1e1e3;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #ffffff;
+  --color-border: #1f1f23;
+  --color-input: #1f1f23;
+  --color-ring: #3b82f6;
+  
+  --radius-lg: 0.5rem;
+  --radius-md: 0.375rem;
+  --radius-sm: 0.25rem;
+}
+
+@layer base {
+  body {
+    @apply bg-background text-foreground antialiased selection:bg-primary/30;
+  }
+}
+
+@keyframes progress-indefinite {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
+.animate-progress-indefinite {
+  animation: progress-indefinite 2s infinite linear;
+}

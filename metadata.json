@@ -1,0 +1,6 @@
+{
+  "name": "Safety-First Agentic Workflow",
+  "description": "Enterprise-grade logistics AI agent with layered deterministic guardrails for safe tool execution.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["AI Agent", "Guardrails", "Real-time Supply Chain"]
+}
