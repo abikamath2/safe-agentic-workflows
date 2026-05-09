@@ -11,6 +11,10 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import com.example.logistics.ai.ExecutionGovernanceLayer.Decision;
+
 /**
  * PRODUCTION GUARDRAIL ADVISOR
  * 
@@ -20,41 +24,78 @@ import java.util.Map;
 @Component
 public class SafetyAdvisor implements CallAroundAdvisor {
 
-    private final GuardrailService guardrailService;
+    private static final Logger log = LoggerFactory.getLogger(SafetyAdvisor.class);
+    private final ExecutionGovernanceLayer governanceLayer;
+    private final AuditService auditService;
 
-    public SafetyAdvisor(GuardrailService guardrailService) {
-        this.guardrailService = guardrailService;
+    public SafetyAdvisor(ExecutionGovernanceLayer governanceLayer, AuditService auditService) {
+        this.governanceLayer = governanceLayer;
+        this.auditService = auditService;
     }
 
     @Override
     public ChatResponse aroundCall(AdvisorContext context, CallAroundAdvisorChain chain) {
-        // 1. Let the LLM generate the response/tool calls
+        // --- 1. PRE-GENERATION ---
+        // Add tracing metadata to the context
+        String correlationId = UUID.randomUUID().toString();
+        context.getAdviseContext().put("X-Logistics-Trace-ID", correlationId);
+
+        // --- 2. GENERATION PHASE ---
         ChatResponse response = chain.next(context);
 
-        // 2. Identify Tool Calls
+        // --- 3. POST-GENERATION / PRE-EXECUTION INTERCEPTION ---
         var toolCalls = response.getResult().getOutput().getToolCalls();
         if (toolCalls == null || toolCalls.isEmpty()) {
             return response;
         }
 
-        // 3. SECURE INTERCEPTION: Pass tool calls through the guardrail pipeline
         for (var toolCall : toolCalls) {
-            String toolName = toolCall.name();
-            Map<String, Object> arguments = toolCall.arguments();
-            
-            // Extract the original user message from context (Grounding Source)
             String sourceEvent = (String) context.getAdviseContext().get("SOURCE_EVENT");
+            
+            // ANALYZE: Evaluate the request through the governance layer
+            var decisions = governanceLayer.evaluateExecutionRequest(sourceEvent, toolCall.name(), toolCall.arguments());
 
-            boolean isSafe = guardrailService.validateAction(sourceEvent, toolName, arguments);
+            Decision aggregateDecision = aggregate(decisions);
+            
+            // AUDIT: Every proposal must be recorded regardless of outcome
+            auditService.record(
+                toolCall.name(), 
+                toolCall.arguments(), 
+                aggregateDecision.name(), 
+                decisions.toString()
+            );
 
-            if (!isSafe) {
-                // BLOCK EXECUTION: Throw an exception to stop tool execution
-                // In a production system, you might revert the chat state or ask for clarification
-                throw new SecurityException("Safety Guardrail Blocked Action: " + toolName);
+            if (aggregateDecision == Decision.BLOCK) {
+                log.error("GOVERNANCE BLOCK | Trace: {} | Tool: {}", correlationId, toolCall.name());
+                
+                // ARCHITECTURAL SHIFT: Instead of crashing, we return a structural explanation.
+                // This ensures the AI's "inner monologue" stays consistent with world rules.
+                // In a real framework, we'd replace the tool result with a 'PERMISSION_DENIED' status.
+                return ChatResponse.builder()
+                    .from(response)
+                    .metadata("X-Logistics-Decision", "BLOCK")
+                    .metadata("X-Logistics-Reason", "Safety Policy Violation")
+                    .build();
+            }
+
+            if (aggregateDecision == Decision.ESCALATE) {
+                log.warn("GOVERNANCE ESCALATION | Trace: {} | Tool: {}", correlationId, toolCall.name());
+                
+                // Trigger external Human-In-The-Loop flow
+                return ChatResponse.builder()
+                    .from(response)
+                    .metadata("X-Logistics-Decision", "ESCALATE")
+                    .build();
             }
         }
 
         return response;
+    }
+
+    private Decision aggregate(List<ExecutionGovernanceLayer.GuardrailDecision> decisions) {
+        if (decisions.stream().anyMatch(d -> d.decision() == Decision.BLOCK)) return Decision.BLOCK;
+        if (decisions.stream().anyMatch(d -> d.decision() == Decision.ESCALATE)) return Decision.ESCALATE;
+        return Decision.APPROVE;
     }
 
     @Override

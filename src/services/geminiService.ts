@@ -66,14 +66,14 @@ export const runGate1Verification = async (sourceEvent: string, proposedAction: 
     Rationale: ${proposedAction.rationale}
     
     TASK:
-    Verify if the proposed action is grounded in the source event.
-    Detect:
-    - Fabricated causes (hallucinations about status)
-    - Exaggerated severity (e.g. 2hr delay treated as 2 week shutdown)
-    - Unsupported entities (references to things not in the event)
+    Perform a grounding check.
     
-    OUTPUT:
-    JSON boolean 'isGrounded' and a list of 'unsupportedClaims'.
+    OUTPUT SCHEMA:
+    {
+      "decision": "VALID" | "INVALID",
+      "unsupportedClaims": string[],
+      "reasoning": string
+    }
   `;
 
   const response = await ai.models.generateContent({
@@ -84,11 +84,39 @@ export const runGate1Verification = async (sourceEvent: string, proposedAction: 
       responseSchema: {
         type: Type.OBJECT,
         properties: {
-          isGrounded: { type: Type.BOOLEAN },
+          decision: { type: Type.STRING, enum: ["VALID", "INVALID"] },
           unsupportedClaims: { type: Type.ARRAY, items: { type: Type.STRING } },
           reasoning: { type: Type.STRING }
         },
-        required: ["isGrounded", "unsupportedClaims"]
+        required: ["decision", "unsupportedClaims"]
+      }
+    }
+  });
+
+  return JSON.parse(response.text);
+};
+
+export const getSeverityAnalysis = async (eventContent: string) => {
+  const prompt = `
+    Analyze the operational severity of the following supply-chain event:
+    "${eventContent}"
+    
+    Score impact from 0.0 (Informational) to 1.0 (Critical/System Shutdown).
+  `;
+
+  const response = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: prompt,
+    config: {
+      responseMimeType: "application/json",
+      responseSchema: {
+        type: Type.OBJECT,
+        properties: {
+          impactScore: { type: Type.NUMBER },
+          classification: { type: Type.STRING },
+          reasoning: { type: Type.STRING }
+        },
+        required: ["impactScore", "classification"]
       }
     }
   });

@@ -21,7 +21,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { LogisticsEvent, Action } from './types';
+import { LogisticsEvent, Action, GuardrailDecision, ExecutionDecision } from './types';
 import { processEventWorkflow } from './services/workflow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -225,7 +225,7 @@ export default function App() {
 }
 
 function ActionCard({ action }: { action: Action }) {
-  const isPending = action.guardrailResults.length === 0;
+  const isPending = action.guardrailDecisions.length === 0;
 
   return (
     <div className="relative">
@@ -242,22 +242,24 @@ function ActionCard({ action }: { action: Action }) {
                 "p-2 rounded border",
                 action.status === 'EXECUTED' ? "bg-emerald-500/10 border-emerald-500/20" : 
                 action.status === 'DENIED' ? "bg-rose-500/10 border-rose-500/20" :
-                "bg-amber-500/10 border-amber-500/20"
+                action.status === 'AWAITING_APPROVAL' ? "bg-amber-500/10 border-amber-500/20" :
+                "bg-blue-500/10 border-blue-500/20"
               )}>
                 <Package className={cn(
                   "w-4 h-4",
                   action.status === 'EXECUTED' ? "text-emerald-500" : 
                   action.status === 'DENIED' ? "text-rose-500" :
-                  "text-amber-500"
+                  action.status === 'AWAITING_APPROVAL' ? "text-amber-500" :
+                  "text-blue-500"
                 )} />
               </div>
               <div>
-                <CardTitle className="text-sm font-bold tracking-tight">
-                  <span className="text-[#8e9299]">PROPOSED ACTION:</span> {action.toolName}
+                <CardTitle className="text-sm font-bold tracking-tight uppercase flex items-center gap-2">
+                  <span className="text-[#8e9299]">Decision:</span> {action.toolName}
                 </CardTitle>
                 <div className="flex items-center gap-2 mt-1">
-                   <Badge variant="secondary" className="text-[9px] h-4 bg-[#1f1f23] border-none text-[#c1c3c7]">AI GENERATED</Badge>
-                   <span className="text-[10px] font-mono text-[#5a5d63]">Confidence: {(action.confidence * 100).toFixed(0)}%</span>
+                   <Badge variant="secondary" className="text-[9px] h-4 bg-[#1f1f23] border-none text-[#c1c3c7]">PROBABILISTIC REASONING</Badge>
+                   <span className="text-[10px] font-mono text-[#5a5d63]">Conf: {(action.confidence * 100).toFixed(0)}%</span>
                 </div>
               </div>
             </div>
@@ -267,7 +269,7 @@ function ActionCard({ action }: { action: Action }) {
             </div>
           </div>
           
-          <p className="text-xs text-[#8e9299] italic italic pl-11">
+          <p className="text-xs text-[#8e9299] italic pl-11">
             "{action.rationale}"
           </p>
         </CardHeader>
@@ -283,28 +285,45 @@ function ActionCard({ action }: { action: Action }) {
           <Separator className="bg-[#1f1f23]" />
 
           <div className="pl-11 space-y-3 pb-2">
-            <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#8e9299] flex items-center gap-2">
-              <ShieldCheck className="w-3 h-3" />
-              Guardrail Validation Pipeline
+            <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#8e9299] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-3 h-3" />
+                Execution Governance Layer
+              </div>
+              <span className="text-[9px] opacity-50">DETERMINISTIC ENFORCEMENT</span>
             </h4>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <GateIndicator 
-                label="CONTEXTUAL GROUNDING" 
-                result={action.guardrailResults[0]} 
+                label="GROUNDING (SLM)" 
+                result={action.guardrailDecisions[0]} 
                 icon={Database}
               />
               <GateIndicator 
-                label="SEVERITY & RISK" 
-                result={action.guardrailResults[1]} 
+                label="SEMANTIC RISK" 
+                result={action.guardrailDecisions[1]} 
                 icon={Activity}
               />
               <GateIndicator 
-                label="POLICY ENFORCEMENT" 
-                result={action.guardrailResults[2]} 
+                label="POLICY ENGINE" 
+                result={action.guardrailDecisions[2]} 
                 icon={ShieldCheck}
               />
             </div>
+
+            {action.status === 'AWAITING_APPROVAL' && (
+              <Alert className="bg-amber-500/10 border-amber-500/20 mt-4">
+                <AlertCircle className="h-4 w-4 text-amber-500" />
+                <AlertTitle className="text-xs font-bold text-amber-500 uppercase">Human-in-the-loop Required</AlertTitle>
+                <AlertDescription className="text-[11px] text-amber-500/80">
+                  Uncertainty detection triggered. Manual review required before execution can proceed in production environment.
+                </AlertDescription>
+                <div className="flex gap-2 mt-3">
+                  <Button size="sm" className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700">APPROVE ACTION</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-rose-500/50 text-rose-500">REJECT</Button>
+                </div>
+              </Alert>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -312,7 +331,7 @@ function ActionCard({ action }: { action: Action }) {
   );
 }
 
-function GateIndicator({ label, result, icon: Icon }: { label: string, result?: any, icon: any }) {
+function GateIndicator({ label, result, icon: Icon }: { label: string, result?: GuardrailDecision, icon: any }) {
   if (!result) {
     return (
       <div className="p-3 rounded border border-[#1f1f23] bg-[#0d0d0f] opacity-50 flex flex-col gap-2">
@@ -328,14 +347,19 @@ function GateIndicator({ label, result, icon: Icon }: { label: string, result?: 
     );
   }
 
+  const isEscalated = result.decision === ExecutionDecision.ESCALATE;
+  const isBlocked = result.decision === ExecutionDecision.BLOCK;
+
   return (
     <div className={cn(
       "p-3 rounded border flex flex-col gap-2 relative group overflow-hidden",
-      result.passed ? "bg-emerald-500/5 border-emerald-500/20" : "bg-rose-500/5 border-rose-500/20"
+      isBlocked ? "bg-rose-500/5 border-rose-500/20" : 
+      isEscalated ? "bg-amber-500/5 border-amber-500/20" :
+      "bg-emerald-500/5 border-emerald-500/20"
     )}>
       <div className={cn(
         "flex items-center gap-2 text-[9px] font-bold",
-        result.passed ? "text-emerald-500" : "text-rose-500"
+        isBlocked ? "text-rose-500" : isEscalated ? "text-amber-500" : "text-emerald-500"
       )}>
         <Icon className="w-3 h-3" />
         {label}
@@ -346,16 +370,18 @@ function GateIndicator({ label, result, icon: Icon }: { label: string, result?: 
       </p>
 
       <div className="flex items-center gap-1.5 mt-auto">
-        {result.passed ? (
-          <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+        {isBlocked ? (
+           <XCircle className="w-3 h-3 text-rose-500" />
+        ) : isEscalated ? (
+           <AlertCircle className="w-3 h-3 text-amber-500" />
         ) : (
-          <XCircle className="w-3 h-3 text-rose-500" />
+           <CheckCircle2 className="w-3 h-3 text-emerald-500" />
         )}
         <span className={cn(
           "text-[9px] font-bold uppercase",
-          result.passed ? "text-emerald-500" : "text-rose-500"
+          isBlocked ? "text-rose-500" : isEscalated ? "text-amber-500" : "text-emerald-500"
         )}>
-          {result.passed ? 'Verified' : 'Blocked'}
+          {result.decision}
         </span>
       </div>
     </div>
@@ -364,10 +390,11 @@ function GateIndicator({ label, result, icon: Icon }: { label: string, result?: 
 
 function StatusBadge({ status }: { status: string }) {
   const config = {
-    PROPOSED: { color: 'bg-amber-500/10 text-amber-500 border-amber-500/20 font-bold', label: 'ANALYZE' },
-    APPROVED: { color: 'bg-blue-500/10 text-blue-500 border-blue-500/20 font-bold', label: 'READY' },
+    PROPOSED: { color: 'bg-blue-500/10 text-blue-400 border-blue-500/20 font-bold', label: 'ANALYZING' },
+    APPROVED: { color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-bold', label: 'VALIDATED' },
+    AWAITING_APPROVAL: { color: 'bg-amber-500/20 text-amber-500 border-amber-500/30 font-bold', label: 'ESCALATED' },
     DENIED: { color: 'bg-rose-500/20 text-rose-500 border-rose-500/30 font-bold', label: 'BLOCKED' },
-    EXECUTED: { color: 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30 font-bold', label: 'EXECUTED' },
+    EXECUTED: { color: 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30 font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]', label: 'EXECUTED' },
   };
 
   const { color, label } = config[status as keyof typeof config] || config.PROPOSED;
