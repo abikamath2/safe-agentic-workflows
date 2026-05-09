@@ -11,49 +11,38 @@ import java.util.UUID;
 @Service
 public class OrchestrationService {
 
-    private final AiDecisionService aiService;
-    private final ExecutionGovernanceLayer governanceLayer;
-    private final AuditService auditService;
+    private final AiDecisionService ai;
+    private final ExecutionGovernanceLayer governance;
 
-    public OrchestrationService(AiDecisionService aiService, 
-                                ExecutionGovernanceLayer governanceLayer,
-                                AuditService auditService) {
-        this.aiService = aiService;
-        this.governanceLayer = governanceLayer;
-        this.auditService = auditService;
+    public OrchestrationService(AiDecisionService ai,
+                                ExecutionGovernanceLayer governance) {
+        this.ai = ai;
+        this.governance = governance;
     }
 
-    public List<ActionProposal> processEvent(LogisticsEvent event) {
-        String correlationId = UUID.randomUUID().toString();
-        
-        // 1. GENERATE INTENT (AI Orchestrator)
-        List<ActionProposal> proposals = aiService.generateDirectives(event.getContent());
+    /**
+     * MASTER ORCHESTRATION WORKFLOW
+     * 
+     * AI generates -> Governance validates -> Orchestrator executes or blocks.
+     */
+    public List<ActionProposal> processEvent(String event) {
+        List<ActionProposal> proposals = ai.generateDirectives(event);
 
-        for (ActionProposal action : proposals) {
-            // 2. GOVERN_EXECUTION (Interception)
-            var report = governanceLayer.evaluate(
-                new GovernanceContext(correlationId, event.getContent(), action.getToolName(), action.getArguments())
-            );
+        for (ActionProposal p : proposals) {
+            GovernanceReport report = governance.evaluate(event, p);
+            p.setGovernanceReport(report);
 
-            action.setGovernanceReport(report);
-            
-            // 3. AUDIT_TRAIL (Compliance)
-            auditService.record(correlationId, action, report);
-            
-            if (report.isAuthorized()) {
-                // Auto-execute if valid, or move to execution queue
-                executeTool(action);
+            if (!report.isAuthorized()) {
+                p.setStatus("BLOCKED");
+            } else {
+                // If it's ESCALATE, we wait for human authorization
+                if (report.isEscalated()) {
+                    p.setStatus("AWAITING_APPROVAL");
+                } else {
+                    p.setStatus("APPROVED");
+                }
             }
         }
-        
         return proposals;
-    }
-
-    private void executeTool(ActionProposal action) {
-        // Logic for triggering MCP Tool Layer
-    }
-
-    public void handleHumanInTheLoop(String actionId, boolean approve) {
-        // Human authorization logic
     }
 }

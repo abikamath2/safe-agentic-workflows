@@ -7,23 +7,20 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 @RestController
-@RequestMapping("/api/v1/control-plane")
+@RequestMapping("/api")
 public class ControlPlaneController {
 
-    private final OrchestrationService orchestrationService;
+    private final OrchestrationService orchestration;
 
-    public ControlPlaneController(OrchestrationService orchestrationService) {
-        this.orchestrationService = orchestrationService;
+    public ControlPlaneController(OrchestrationService orchestration) {
+        this.orchestration = orchestration;
     }
 
+    /**
+     * INBOUND EVENT GATEWAY
+     */
     @PostMapping("/events")
-    public List<ActionProposal> ingestEvent(@RequestBody LogisticsEvent event) {
-        // Intelligence Tier handles the full workflow
-        return orchestrationService.processEvent(event);
-    }
-
-    @PostMapping("/actions/{id}/authorize")
-    public void authorizeAction(@PathVariable String id, @RequestParam boolean approve) {
-        orchestrationService.handleHumanInTheLoop(id, approve);
+    public List<ActionProposal> handle(@RequestBody String event) {
+        return orchestration.processEvent(event);
     }
 }

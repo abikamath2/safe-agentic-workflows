@@ -8,8 +8,8 @@ public class ActionProposal {
     private Map<String, Object> arguments;
     private String rationale;
     private double confidence;
-    private Object governanceReport; // GovernanceReport DTO
+    private GovernanceReport governanceReport;
     private String status;
 
-    // Getters and Setters
+    // Getters and Setters omitted for brevity
 }
