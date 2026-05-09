@@ -1,36 +1,35 @@
 package com.example.logistics.ai;
 
 import org.springframework.ai.tool.annotation.Tool;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 /**
- * TOOL LAYER
+ * TOOL EXECUTION LAYER (MCP Compatible)
  * 
- * Only executes after SafetyAdvisor approval.
+ * These methods are ONLY called if the SafetyAdvisor allows the flow.
+ * They represent deterministic enterprise system operations.
  */
-@Service
+@Component
 public class LogisticsTools {
-
     private static final Logger log = LoggerFactory.getLogger(LogisticsTools.class);
 
-    @Tool(description = "Reroute a shipment to a new destination or mode")
-    public String rerouteShipment(String shipmentId, String newRoute, String mode, String reason) {
-        log.info("EXECUTING: Rerouting {} to {} via {} due to {}", shipmentId, newRoute, mode, reason);
-        // Real logic would update Postgres/ERP here
-        return "SUCCESS: Shipment " + shipmentId + " rerouted.";
+    @Tool(description = "Reroute a shipment to a new destination hub")
+    public String rerouteShipment(String shipmentId, String destinationHubId) {
+        log.info("EXECUTING: Rerouting {} to {}", shipmentId, destinationHubId);
+        return "Shipment " + shipmentId + " rerouted to " + destinationHubId + " successfully.";
     }
 
-    @Tool(description = "Switch current shipment carrier to a new approved vendor")
-    public String switchCarrier(String shipmentId, String newCarrierId, String reason) {
-        log.info("EXECUTING: Switching carrier for {} to {} - Reason: {}", shipmentId, newCarrierId, reason);
-        return "SUCCESS: Carrier updated for " + shipmentId;
+    @Tool(description = "Switch carrier for an existing shipment")
+    public String switchCarrier(String shipmentId, String newCarrierId) {
+        log.info("EXECUTING: Switching {} to carrier {}", shipmentId, newCarrierId);
+        return "Carrier switched to " + newCarrierId + " for shipment " + shipmentId;
     }
 
-    @Tool(description = "Trigger an emergency procurement flow for critical stock")
-    public String triggerEmergencyProcurement(String sku, Integer quantity, String reason) {
-        log.info("EXECUTING: Emergency procurement for {} units of {} - Reason: {}", quantity, sku, reason);
-        return "SUCCESS: Procurement flow initiated.";
+    @Tool(description = "Notify stakeholders about supply chain events")
+    public String notifyStakeholders(String message, String priority) {
+        log.info("EXECUTING: Notification sent - {} [Priority: {}]", message, priority);
+        return "Notification broadcasted.";
     }
 }

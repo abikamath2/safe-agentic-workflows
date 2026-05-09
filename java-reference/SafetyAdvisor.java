@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -56,44 +57,40 @@ public class SafetyAdvisor implements CallAroundAdvisor {
                 correlationId, sourceEvent, toolCall.name(), toolCall.arguments()
             );
 
-            // ANALYZE: Evaluate the request through the governance layer
-            var decisions = governanceLayer.evaluate(govCtx);
-            Decision aggregateDecision = aggregate(decisions);
+            // ANALYZE: Evaluate the request through the enterprise governance layer
+            var report = governanceLayer.evaluate(govCtx);
             
             // AUDIT: Link traceId for cross-service replayability
-            auditService.record(correlationId, toolCall.name(), toolCall.arguments(), aggregateDecision.name(), decisions.toString());
+            auditService.record(correlationId, toolCall.name(), toolCall.arguments(), report.isAuthorized() ? "AUTHORIZED" : "BLOCKED", report.decisions().toString());
 
-            if (aggregateDecision == Decision.BLOCK) {
-                log.error("GOVERNANCE BLOCK | Trace: {} | Gate: {}", correlationId, toolCall.name());
+            if (!report.isAuthorized()) {
+                log.error("GOVERNANCE BLOCK | Trace: {} | Tools: {}", correlationId, toolCall.name());
                 
-                // Return structured governance rejection metadata
+                // Return structured governance rejection metadata for UI observability
                 return ChatResponse.builder()
                     .from(response)
-                    .metadata("X-Governance-Decision", "BLOCK")
+                    .metadata("X-Governance-Status", "BLOCKED")
                     .metadata("X-Governance-Trace", correlationId)
-                    .metadata("X-Governance-Reason", decisions.stream()
+                    .metadata("X-Governance-Failed-Gate", report.decisions().stream()
                         .filter(d -> d.decision() == Decision.BLOCK)
-                        .findFirst().map(d -> d.details()).orElse("Policy Block"))
+                        .findFirst().map(d -> d.gate()).orElse("UNKNOWN"))
                     .build();
             }
 
-            if (aggregateDecision == Decision.ESCALATE) {
+            boolean needsEscalation = report.decisions().stream()
+                .anyMatch(d -> d.decision() == Decision.ESCALATE);
+
+            if (needsEscalation) {
                 log.warn("GOVERNANCE ESCALATION | Trace: {}", correlationId);
                 return ChatResponse.builder()
                     .from(response)
-                    .metadata("X-Governance-Decision", "ESCALATE")
+                    .metadata("X-Governance-Status", "ESCALATE")
                     .metadata("X-Governance-Trace", correlationId)
                     .build();
             }
         }
 
         return response;
-    }
-
-    private Decision aggregate(List<ExecutionGovernanceLayer.GuardrailDecision> decisions) {
-        if (decisions.stream().anyMatch(d -> d.decision() == Decision.BLOCK)) return Decision.BLOCK;
-        if (decisions.stream().anyMatch(d -> d.decision() == Decision.ESCALATE)) return Decision.ESCALATE;
-        return Decision.APPROVE;
     }
 
     @Override
