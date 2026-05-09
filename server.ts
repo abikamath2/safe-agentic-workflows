@@ -38,10 +38,12 @@ async function startServer() {
 
   app.use(express.json());
 
-  // -- API LAYER (Proxy to Backend Control Plane) --
+  // -- DATA TIER (Proxy to Intelligence Layer) --
 
   app.post("/api/events", async (req, res) => {
     const { content, source } = req.body;
+    
+    // 1. Log Inbound Telemetry
     const event: LogisticsEvent = { 
         id: uuidv4(), 
         timestamp: new Date().toISOString(), 
@@ -49,55 +51,60 @@ async function startServer() {
         content, 
         status: 'PENDING' 
     };
-    
     events.push(event);
     io.emit("event:new", event);
-    res.status(201).json(event);
 
-    // Delegate and stream results back to UI
+    // 2. FORWARD TO INTELLIGENCE TIER (Spring Boot Control Plane)
+    // In production, this would be: await fetch("http://backend-service:8080/api/v1/events", ...)
     try {
         const proposals = await SpringBootBackendEmulator.handleEvent(event.content);
+        
+        // 3. BROADCAST TELEMETRY TO UI
         for (const p of proposals) {
-            const enrichedAction = { ...p, eventId: event.id };
-            actions.push(enrichedAction);
-            io.emit("action:update", enrichedAction);
+            const action = { ...p, eventId: event.id };
+            actions.push(action);
+            io.emit("action:update", action);
             
-            // Execute mock transition if approved
-            if (enrichedAction.status === 'APPROVED') {
+            // Handle auto-execution simulation
+            if (action.status === 'APPROVED') {
                 setTimeout(() => {
-                    enrichedAction.status = 'EXECUTED';
-                    io.emit("action:update", enrichedAction);
-                }, 2000);
+                    action.status = 'EXECUTED';
+                    io.emit("action:update", action);
+                }, 1500);
             }
         }
+        res.status(201).json(event);
     } catch (e) {
-        console.error("Backend Proxy Error:", e);
+        console.error("Upstream Control Plane Error:", e);
+        res.status(502).json({ error: "Intelligence Tier Unavailable" });
     }
   });
-
-  app.get("/api/data", (req, res) => res.json({ events, actions }));
 
   app.post("/api/actions/:id/decide", async (req, res) => {
     const { id } = req.params;
     const { decision } = req.body;
+    
+    // Proxy authorization to upstream
     const action = actions.find(a => a.id === id);
-    if (!action) return res.status(404).json({ error: "Not found" });
+    if (!action) return res.status(404).json({ error: "Action target not found" });
 
-    if (decision === 'APPROVE') {
-      action.status = 'APPROVED';
-      action.finalDecision = ExecutionDecision.APPROVE;
-      io.emit("action:update", action);
-      setTimeout(() => {
-        action.status = 'EXECUTED';
-        io.emit("action:update", action);
-      }, 1000);
-    } else {
-      action.status = 'DENIED';
-      action.finalDecision = ExecutionDecision.BLOCK;
-      io.emit("action:update", action);
+    // Inform Intelligence Tier of human decision
+    action.status = decision === 'APPROVE' ? 'APPROVED' : 'DENIED';
+    action.finalDecision = decision === 'APPROVE' ? ExecutionDecision.APPROVE : ExecutionDecision.BLOCK;
+    
+    io.emit("action:update", action);
+    
+    if (action.status === 'APPROVED') {
+        setTimeout(() => {
+            action.status = 'EXECUTED';
+            io.emit("action:update", action);
+        }, 1000);
     }
-    res.json(action);
+    
+    res.json({ status: "Authorization Transmitted" });
   });
+
+  app.get("/api/data", (req, res) => res.json({ events, actions }));
 
   // -- ASSET PIPELINE (Infrastructure) --
 
