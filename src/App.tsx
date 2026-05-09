@@ -2,11 +2,9 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { io } from 'socket.io-client';
 import { 
   ShieldCheck, 
-  ShieldAlert, 
   Activity, 
   Package, 
   AlertCircle, 
-  ChevronRight,
   Terminal,
   Cpu,
   Database,
@@ -15,14 +13,13 @@ import {
   Clock
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { LogisticsEvent, Action, GuardrailDecision, ExecutionDecision } from './types';
-import { processEventWorkflow } from './services/workflow';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -35,28 +32,20 @@ export default function App() {
   const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    // Initial data fetch
+    // Initial data fetch from Server Control Plane
     fetch('/api/data')
       .then(res => res.json())
       .then(data => {
-        setEvents(data.events);
-        setActions(data.actions);
+        setEvents(data.events || []);
+        setActions(data.actions || []);
       });
 
-    // Real-time updates
+    // Real-time updates from Backend Control Plane
     socket.on('event:new', (event: LogisticsEvent) => {
       setEvents(prev => [event, ...prev]);
-      handleNewEvent(event);
     });
 
-    return () => {
-      socket.off('event:new');
-    };
-  }, []);
-
-  const handleNewEvent = useCallback(async (event: LogisticsEvent) => {
-    setIsProcessing(true);
-    await processEventWorkflow(event, (updatedAction) => {
+    socket.on('action:update', (updatedAction: Action) => {
       setActions(prev => {
         const index = prev.findIndex(a => a.id === updatedAction.id);
         if (index >= 0) {
@@ -66,11 +55,18 @@ export default function App() {
         }
         return [updatedAction, ...prev];
       });
+      
+      // Update global UI processing state
+      const currentlyThinking = updatedAction.status === 'PROPOSED';
+      setIsProcessing(currentlyThinking);
     });
-    setIsProcessing(false);
+
+    return () => {
+      socket.off('event:new');
+      socket.off('action:update');
+    };
   }, []);
 
-  // Mock a webhook call for the demo
   const triggerDemoEvent = (scenario: 'safe' | 'hallucination' | 'policy') => {
     let content = "";
     if (scenario === 'safe') {
@@ -84,7 +80,7 @@ export default function App() {
     fetch('/api/events', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content, source: "Manual Demo Trigger" })
+      body: JSON.stringify({ content, source: "Manual Simulation" })
     });
   };
 
@@ -99,19 +95,19 @@ export default function App() {
             </div>
             <div>
               <h1 className="text-sm font-bold tracking-tight uppercase">Safety-First Agentic Workflow</h1>
-              <p className="text-[10px] text-[#8e9299] uppercase tracking-widest font-mono">Logistics Enterprise AI Core</p>
+              <p className="text-[10px] text-[#8e9299] uppercase tracking-widest font-mono">Backend Control Plane: Active</p>
             </div>
           </div>
           
           <div className="flex items-center gap-6 text-[11px] font-mono uppercase text-[#8e9299]">
             <div className="flex items-center gap-2">
               <div className={cn("w-1.5 h-1.5 rounded-full animate-pulse", isProcessing ? "bg-amber-500" : "bg-emerald-500")} />
-              <span>Status: {isProcessing ? 'Processing Workflow' : 'System Ready'}</span>
+              <span>Status: {isProcessing ? 'Remote Orchestration' : 'System Ready'}</span>
             </div>
             <Separator orientation="vertical" className="h-4 bg-[#1f1f23]" />
             <div className="flex items-center gap-2">
               <Activity className="w-3 h-3" />
-              <span>Events: {events.length}</span>
+              <span>Stream Latency: 24ms</span>
             </div>
           </div>
         </div>
@@ -126,12 +122,12 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <CardTitle className="text-xs font-bold uppercase tracking-wider flex items-center gap-2">
                   <Terminal className="w-4 h-4 text-[#8e9299]" />
-                  Event Feed
+                  Telemetry Source
                 </CardTitle>
                 <div className="flex gap-1">
-                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23]" onClick={() => triggerDemoEvent('safe')} title="Safe Event">S</Button>
-                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23]" onClick={() => triggerDemoEvent('hallucination')} title="Hallucination Trigger">H</Button>
-                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23]" onClick={() => triggerDemoEvent('policy')} title="Policy Trigger">P</Button>
+                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23] hover:text-emerald-400" onClick={() => triggerDemoEvent('safe')} title="Safe Event">S</Button>
+                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23] hover:text-amber-400" onClick={() => triggerDemoEvent('hallucination')} title="Risk Event">R</Button>
+                   <Button variant="outline" size="icon" className="h-7 w-7 border-[#1f1f23] hover:text-rose-400" onClick={() => triggerDemoEvent('policy')} title="Policy Event">P</Button>
                 </div>
               </div>
             </CardHeader>
@@ -159,7 +155,7 @@ export default function App() {
                     ))}
                     {events.length === 0 && (
                       <div className="text-center py-12 text-[#5a5d63] text-xs font-mono">
-                        WAITING FOR INCOMING WEBHOOKS...
+                        AWAITING INCOMING TELEMETRY FROM BACKEND...
                       </div>
                     )}
                   </AnimatePresence>
@@ -174,10 +170,10 @@ export default function App() {
           <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
             <TabsList className="bg-[#111114] border border-[#1f1f23] h-10 p-1">
               <TabsTrigger value="monitor" className="text-[10px] uppercase tracking-widest px-6 data-[state=active]:bg-[#1f1f23]">
-                Workflow Execution
+                Observability Dashboard
               </TabsTrigger>
               <TabsTrigger value="audit" className="text-[10px] uppercase tracking-widest px-6 data-[state=active]:bg-[#1f1f23]">
-                Audit Logs
+                Trace Logs
               </TabsTrigger>
             </TabsList>
             
@@ -197,7 +193,9 @@ export default function App() {
                   {actions.length === 0 && (
                     <Card className="bg-[#111114] border-dashed border-[#1f1f23] py-24 flex flex-col items-center justify-center text-[#5a5d63]">
                       <Cpu className="w-8 h-8 mb-4 opacity-50" />
-                      <p className="text-xs uppercase tracking-widest font-mono">Idle: Awaiting AI Logic Chain</p>
+                      <p className="text-xs uppercase tracking-widest font-mono text-center px-8 leading-relaxed">
+                        Presentation Layer Initialized.<br/>Listening for Remote Control Plane Directives.
+                      </p>
                     </Card>
                   )}
                 </AnimatePresence>
@@ -205,15 +203,15 @@ export default function App() {
             </TabsContent>
 
             <TabsContent value="audit">
-              {/* Audit logs would go here - simplified for demo */}
               <Card className="bg-[#111114] border-[#1f1f23] font-mono">
                 <CardContent className="p-4 text-[10px] space-y-1">
                   {actions.map(a => (
-                    <div key={a.id} className="text-[#8e9299]">
-                      [{new Date().toISOString()}] ACTION_{a.status}: {a.toolName} ({a.id}) - CONFIDENCE: {a.confidence}
+                    <div key={a.id} className="text-[#8e9299] py-1 border-b border-[#1f1f23] last:border-0">
+                      <span className="text-primary mr-2">[{new Date().toISOString()}]</span>
+                      <span className="text-[#c1c3c7]">EVENT:</span> {a.status} | <span className="text-[#c1c3c7]">DIRECTIVE:</span> {a.toolName} | <span className="text-[#c1c3c7]">DECISION:</span> {a.finalDecision}
                     </div>
                   ))}
-                  {actions.length === 0 && <div className="text-[#5a5d63]">No audit records found.</div>}
+                  {actions.length === 0 && <div className="text-[#5a5d63]">Governance audit empty.</div>}
                 </CardContent>
               </Card>
             </TabsContent>
@@ -255,10 +253,10 @@ function ActionCard({ action }: { action: Action }) {
               </div>
               <div>
                 <CardTitle className="text-sm font-bold tracking-tight uppercase flex items-center gap-2">
-                  <span className="text-[#8e9299]">Decision:</span> {action.toolName}
+                  <span className="text-[#8e9299]">AI Proposal:</span> {action.toolName}
                 </CardTitle>
                 <div className="flex items-center gap-2 mt-1">
-                   <Badge variant="secondary" className="text-[9px] h-4 bg-[#1f1f23] border-none text-[#c1c3c7]">PROBABILISTIC REASONING</Badge>
+                   <Badge variant="secondary" className="text-[9px] h-4 bg-[#1f1f23] border-none text-[#c1c3c7]">PROBABILISTIC ANALYSIS</Badge>
                    <span className="text-[10px] font-mono text-[#5a5d63]">Conf: {(action.confidence * 100).toFixed(0)}%</span>
                 </div>
               </div>
@@ -288,9 +286,9 @@ function ActionCard({ action }: { action: Action }) {
             <h4 className="text-[10px] font-bold uppercase tracking-widest text-[#8e9299] flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <ShieldCheck className="w-3 h-3" />
-                Execution Governance Layer
+                DETERMINISTIC GOVERNANCE LAYER (SERVER-SIDE)
               </div>
-              <span className="text-[9px] opacity-50">DETERMINISTIC ENFORCEMENT</span>
+              <span className="text-[9px] opacity-50 uppercase tracking-tighter">Control Plane Verified</span>
             </h4>
             
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -314,13 +312,13 @@ function ActionCard({ action }: { action: Action }) {
             {action.status === 'AWAITING_APPROVAL' && (
               <Alert className="bg-amber-500/10 border-amber-500/20 mt-4">
                 <AlertCircle className="h-4 w-4 text-amber-500" />
-                <AlertTitle className="text-xs font-bold text-amber-500 uppercase">Human-in-the-loop Required</AlertTitle>
+                <AlertTitle className="text-xs font-bold text-amber-500 uppercase tracking-wide">Human-in-the-loop Required</AlertTitle>
                 <AlertDescription className="text-[11px] text-amber-500/80">
-                  Uncertainty detection triggered. Manual review required before execution can proceed in production environment.
+                  The Backend Control Plane has flagged this directive for manual authorization based on semantic risk threshold.
                 </AlertDescription>
                 <div className="flex gap-2 mt-3">
-                  <Button size="sm" className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700">APPROVE ACTION</Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-rose-500/50 text-rose-500">REJECT</Button>
+                  <Button size="sm" className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700">AUTHORIZE</Button>
+                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-rose-500/50 text-rose-500">REVOKE</Button>
                 </div>
               </Alert>
             )}
@@ -390,11 +388,11 @@ function GateIndicator({ label, result, icon: Icon }: { label: string, result?: 
 
 function StatusBadge({ status }: { status: string }) {
   const config = {
-    PROPOSED: { color: 'bg-blue-500/10 text-blue-400 border-blue-500/20 font-bold', label: 'ANALYZING' },
+    PROPOSED: { color: 'bg-blue-500/10 text-blue-400 border-blue-500/20 font-bold', label: 'EVALUATING' },
     APPROVED: { color: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20 font-bold', label: 'VALIDATED' },
     AWAITING_APPROVAL: { color: 'bg-amber-500/20 text-amber-500 border-amber-500/30 font-bold', label: 'ESCALATED' },
     DENIED: { color: 'bg-rose-500/20 text-rose-500 border-rose-500/30 font-bold', label: 'BLOCKED' },
-    EXECUTED: { color: 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30 font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]', label: 'EXECUTED' },
+    EXECUTED: { color: 'bg-emerald-500/20 text-emerald-500 border-emerald-500/30 font-bold shadow-[0_0_10px_rgba(16,185,129,0.2)]', label: 'TRANSMITTED' },
   };
 
   const { color, label } = config[status as keyof typeof config] || config.PROPOSED;
