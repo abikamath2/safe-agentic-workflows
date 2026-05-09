@@ -9,7 +9,9 @@ import java.util.UUID;
 /**
  * OBSERVABILITY & COMPLIANCE LAYER
  * 
- * Provides centralized audit logging for all AI-generated actions.
+ * Centralized audit logging for the AI Control Plane.
+ * Decoupled from the frontend, ensuring trace integrity across 
+ * all probabilistic and deterministic gates.
  */
 @Service
 public class AuditService {
@@ -23,14 +25,15 @@ public class AuditService {
         String rationale
     ) {}
 
-    public String record(String toolName, Map<String, Object> arguments, String decision, String rationale) {
-        String traceId = UUID.randomUUID().toString();
+    /**
+     * Records an execution directive decision.
+     * This data is typically streamed to an Observability Dashboard (React)
+     * via WebSocket or Persistent Storage (Elastic/PostgreSQL).
+     */
+    public void record(String traceId, String toolName, Map<String, Object> arguments, String decision, String rationale) {
         AuditRecord record = new AuditRecord(traceId, toolName, arguments, decision, rationale);
         
-        // In a real system, this writes to PostgreSQL, ElasticSearch, or a Data Lake
         log.info("AUDIT_LOG | ID: {} | TOOL: {} | DECISION: {} | RATIONALE: {}", 
             traceId, toolName, decision, rationale);
-            
-        return traceId;
     }
 }

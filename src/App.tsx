@@ -317,8 +317,33 @@ function ActionCard({ action }: { action: Action }) {
                   The Backend Control Plane has flagged this directive for manual authorization based on semantic risk threshold.
                 </AlertDescription>
                 <div className="flex gap-2 mt-3">
-                  <Button size="sm" className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700">AUTHORIZE</Button>
-                  <Button size="sm" variant="outline" className="h-7 text-[10px] border-rose-500/50 text-rose-500">REVOKE</Button>
+                  <Button 
+                    size="sm" 
+                    className="h-7 text-[10px] bg-emerald-600 hover:bg-emerald-700"
+                    onClick={() => {
+                      fetch(`/api/actions/${action.id}/decide`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ decision: 'APPROVE' })
+                      });
+                    }}
+                  >
+                    AUTHORIZE
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="outline" 
+                    className="h-7 text-[10px] border-rose-500/50 text-rose-500"
+                    onClick={() => {
+                      fetch(`/api/actions/${action.id}/decide`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ decision: 'DENIED' })
+                      });
+                    }}
+                  >
+                    REVOKE
+                  </Button>
                 </div>
               </Alert>
             )}

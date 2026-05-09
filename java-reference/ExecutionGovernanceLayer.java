@@ -18,6 +18,13 @@ public class ExecutionGovernanceLayer {
         APPROVE, BLOCK, ESCALATE
     }
 
+    public record GovernanceContext(
+        String traceId,
+        String sourceEvent,
+        String toolName,
+        Map<String, Object> arguments
+    ) {}
+
     public record GuardrailDecision(
         Decision decision,
         String gate,
@@ -26,64 +33,75 @@ public class ExecutionGovernanceLayer {
     ) {}
 
     private final ChatClient verifierClient;
+    private final ObjectMapper objectMapper;
 
-    public ExecutionGovernanceLayer(ChatClient.Builder builder) {
+    public ExecutionGovernanceLayer(ChatClient.Builder builder, ObjectMapper objectMapper) {
         this.verifierClient = builder.build();
+        this.objectMapper = objectMapper;
     }
 
-    public List<GuardrailDecision> evaluateExecutionRequest(String sourceEvent, String toolName, Map<String, Object> arguments) {
+    public List<GuardrailDecision> evaluate(GovernanceContext context) {
         return List.of(
-            verifyContextualGrounding(sourceEvent, toolName, arguments),
-            correlateSeverity(sourceEvent, toolName),
-            enforceDeterministicPolicy(toolName, arguments)
+            verifyGrounding(context),
+            analyzeSeverityRisk(context),
+            checkDeterministicPolicy(context)
         );
     }
 
-    private GuardrailDecision verifyContextualGrounding(String sourceEvent, String toolName, Map<String, Object> arguments) {
-        // Use structured JSON output for parsing
+    private GuardrailDecision verifyGrounding(GovernanceContext ctx) {
         String prompt = """
-            Perform a grounding check.
+            Perform exact grounding check.
             SOURCE: %s
-            ACTION: %s with args %s
-            Output JSON: { "decision": "VALID" | "INVALID", "reason": "string" }
-            """.formatted(sourceEvent, toolName, arguments);
+            PROPOSAL: %s (%s)
+            
+            Return JSON only: { "isGrounded": boolean, "unsupportedClaims": [], "reasoning": "" }
+            """.formatted(ctx.sourceEvent(), ctx.toolName(), ctx.arguments());
 
-        // Simulated JSON parse (Professional implementation would use ObjectMapper)
-        String raw = verifierClient.prompt(prompt).call().content();
-        boolean isValid = raw.contains("\"decision\": \"VALID\"");
-        
-        return new GuardrailDecision(
-            isValid ? Decision.APPROVE : Decision.BLOCK,
-            "GATE 1 - CONTEXTUAL GROUNDING",
-            isValid ? "Action is grounded in source context." : "Hallucination detected in AI proposal.",
-            null
-        );
+        try {
+            String rawJson = verifierClient.prompt(prompt).call().content();
+            JsonNode groundResult = objectMapper.readTree(rawJson);
+            
+            boolean isValid = groundResult.get("isGrounded").asBoolean();
+            
+            return new GuardrailDecision(
+                isValid ? Decision.APPROVE : Decision.BLOCK,
+                "GROUNDING_GATE",
+                isValid ? "Grounded in source." : "Hallucination: " + groundResult.get("unsupportedClaims").toString(),
+                null
+            );
+        } catch (Exception e) {
+            return new GuardrailDecision(Decision.BLOCK, "GROUNDING_GATE", "Verification Parse Error", null);
+        }
     }
 
-    private GuardrailDecision correlateSeverity(String sourceEvent, String toolName) {
-        // More sophisticated severity analysis would happen here
-        double severity = sourceEvent.toLowerCase().contains("minor") ? 0.2 : 0.9;
-        boolean isHighRisk = toolName.equals("rerouteShipment");
+    private GuardrailDecision analyzeSeverityRisk(GovernanceContext ctx) {
+        // Use AI to extract operational severity from event
+        String prompt = "Rate operational impact of supply chain event from 0.0 to 1.0 (Critical): " + ctx.sourceEvent();
+        String rawScore = verifierClient.prompt(prompt).call().content().replaceAll("[^0-9.]", "");
+        double score = Double.parseDouble(rawScore.isBlank() ? "0.0" : rawScore);
+        
+        boolean isHighRiskTool = ctx.toolName().equalsIgnoreCase("rerouteShipment");
 
-        if (isHighRisk && severity < 0.6) {
-            return new GuardrailDecision(Decision.BLOCK, "GATE 2 - SEMANTIC RISK", "High-risk action proposed for low-severity event.", severity);
+        if (isHighRiskTool && score < 0.6) {
+            return new GuardrailDecision(Decision.BLOCK, "SEVERITY_GATE", "High-risk tool rejected for low-impact event (Score: "+score+")", score);
+        } else if (score > 0.85) {
+            return new GuardrailDecision(Decision.APPROVE, "SEVERITY_GATE", "Critical severity confirmed. Action authorized.", score);
         }
         
-        return new GuardrailDecision(Decision.APPROVE, "GATE 2 - SEMANTIC RISK", "Severity correlates with action scale.", severity);
+        return new GuardrailDecision(Decision.APPROVE, "SEVERITY_GATE", "Severity/Risk correlation verified.", score);
     }
 
-    private GuardrailDecision enforceDeterministicPolicy(String toolName, Map<String, Object> arguments) {
-        // Standard Java / DB / Redis rules
-        if (toolName.equals("switchCarrier")) {
-            String carrierId = (String) arguments.get("newCarrierId");
-            boolean isApproved = carrierId != null && !carrierId.equals("UNAPPROVED_VENDOR");
+    private GuardrailDecision checkDeterministicPolicy(GovernanceContext ctx) {
+        if ("switchCarrier".equals(ctx.toolName())) {
+            String cId = (String) ctx.arguments().get("newCarrierId");
+            boolean approved = cId != null && !cId.equalsIgnoreCase("UNAPPROVED");
             return new GuardrailDecision(
-                isApproved ? Decision.APPROVE : Decision.BLOCK,
-                "GATE 3 - POLICY ENGINE",
-                isApproved ? "Carrier is on approved list." : "Enterprise policy violation: Unapproved vendor.",
+                approved ? Decision.APPROVE : Decision.BLOCK,
+                "POLICY_GATE",
+                approved ? "Carrier policy compliant." : "Policy Violation: Unapproved Vendor.",
                 null
             );
         }
-        return new GuardrailDecision(Decision.APPROVE, "GATE 3 - POLICY ENGINE", "Complies with logistics policies.", null);
+        return new GuardrailDecision(Decision.APPROVE, "POLICY_GATE", "Compliant.", null);
     }
 }

@@ -52,39 +52,37 @@ public class SafetyAdvisor implements CallAroundAdvisor {
         for (var toolCall : toolCalls) {
             String sourceEvent = (String) context.getAdviseContext().get("SOURCE_EVENT");
             
-            // ANALYZE: Evaluate the request through the governance layer
-            var decisions = governanceLayer.evaluateExecutionRequest(sourceEvent, toolCall.name(), toolCall.arguments());
-
-            Decision aggregateDecision = aggregate(decisions);
-            
-            // AUDIT: Every proposal must be recorded regardless of outcome
-            auditService.record(
-                toolCall.name(), 
-                toolCall.arguments(), 
-                aggregateDecision.name(), 
-                decisions.toString()
+            var govCtx = new ExecutionGovernanceLayer.GovernanceContext(
+                correlationId, sourceEvent, toolCall.name(), toolCall.arguments()
             );
 
+            // ANALYZE: Evaluate the request through the governance layer
+            var decisions = governanceLayer.evaluate(govCtx);
+            Decision aggregateDecision = aggregate(decisions);
+            
+            // AUDIT: Link traceId for cross-service replayability
+            auditService.record(correlationId, toolCall.name(), toolCall.arguments(), aggregateDecision.name(), decisions.toString());
+
             if (aggregateDecision == Decision.BLOCK) {
-                log.error("GOVERNANCE BLOCK | Trace: {} | Tool: {}", correlationId, toolCall.name());
+                log.error("GOVERNANCE BLOCK | Trace: {} | Gate: {}", correlationId, toolCall.name());
                 
-                // ARCHITECTURAL SHIFT: Instead of crashing, we return a structural explanation.
-                // This ensures the AI's "inner monologue" stays consistent with world rules.
-                // In a real framework, we'd replace the tool result with a 'PERMISSION_DENIED' status.
+                // Return structured governance rejection metadata
                 return ChatResponse.builder()
                     .from(response)
-                    .metadata("X-Logistics-Decision", "BLOCK")
-                    .metadata("X-Logistics-Reason", "Safety Policy Violation")
+                    .metadata("X-Governance-Decision", "BLOCK")
+                    .metadata("X-Governance-Trace", correlationId)
+                    .metadata("X-Governance-Reason", decisions.stream()
+                        .filter(d -> d.decision() == Decision.BLOCK)
+                        .findFirst().map(d -> d.details()).orElse("Policy Block"))
                     .build();
             }
 
             if (aggregateDecision == Decision.ESCALATE) {
-                log.warn("GOVERNANCE ESCALATION | Trace: {} | Tool: {}", correlationId, toolCall.name());
-                
-                // Trigger external Human-In-The-Loop flow
+                log.warn("GOVERNANCE ESCALATION | Trace: {}", correlationId);
                 return ChatResponse.builder()
                     .from(response)
-                    .metadata("X-Logistics-Decision", "ESCALATE")
+                    .metadata("X-Governance-Decision", "ESCALATE")
+                    .metadata("X-Governance-Trace", correlationId)
                     .build();
             }
         }
