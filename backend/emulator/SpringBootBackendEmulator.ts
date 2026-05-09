@@ -1,17 +1,14 @@
-import { GoogleGenerativeAI } from "@google/generative-ai";
 import { v4 as uuidv4 } from "uuid";
 
 /**
- * SIMULATED SPRING BOOT BACKEND
+ * TIER 3: MOCK BACKEND (Spring Boot Emulator)
  * 
- * Architecture:
- * - This emulator represents the "Backend AI Control Plane" tier.
- * - In production, this logic is implemented in Java Spring Boot (see /java-reference).
- * - Here it provides the REST/WebSocket responses for the frontend observability layer.
+ * ROLE:
+ * - Deterministic simulator for the Java Intelligence Tier.
+ * - Returns hardcoded "Mock" responses for UI walkthroughs.
+ * - NO AI reasoning, prompts, or dynamic orchestration.
+ * - STRICTLY MOCK - used for demo support only.
  */
-
-const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY as string);
-const MODAL_ID = "gemini-1.5-flash";
 
 export enum ExecutionDecision {
   APPROVE = 'APPROVE',
@@ -33,68 +30,99 @@ export class SpringBootBackendEmulator {
   }
   
   /**
-   * Represents: OrchestrationService.processEvent()
+   * Represents inbound event processing in the Java Control Plane
    */
   static async handleEvent(content: string, source: string) {
     const event = { 
         id: uuidv4(), 
         timestamp: new Date().toISOString(), 
-        source: source || "Inbound Telemetry", 
+        source: source || "Mock Inbound", 
         content, 
         status: 'PENDING' 
     };
     this.events.push(event);
     this.broadcast("event:new", event);
 
-    const genModel = ai.getGenerativeModel({ model: MODAL_ID });
-    
-    try {
-        // 1. GENERATE INTENT (Intelligence Tier)
-        const response = await genModel.generateContent({
-          contents: [{ role: 'user', parts: [{ text: `Act as Logistics AI Control Plane. Event: "${content}". Propose actions. Output JSON: { "actions": [{ "toolName": string, "arguments": any, "rationale": string, "confidence": number }] }` }] }],
-          generationConfig: { responseMimeType: "application/json" }
-        });
+    // Simulate Backend Thinking Latency
+    setTimeout(async () => {
+        const mockProposals = this.getMockProposalsForContent(content, event.id);
         
-        const brain = JSON.parse(response.response.text());
+        for (const action of mockProposals) {
+            this.actions.push(action);
+            this.broadcast("action:update", action);
 
-        for (const proposed of (brain.actions || [])) {
-          const traceId = uuidv4();
-          
-          // 2. GOVERNANCE INTERCEPTION
-          const decisions = await this.evaluateGovernance(content, proposed, traceId);
-          
-          const hasBlock = decisions.some(d => d.decision === ExecutionDecision.BLOCK);
-          const hasEscalate = decisions.some(d => d.decision === ExecutionDecision.ESCALATE);
-
-          const action = {
-            id: traceId,
-            eventId: event.id,
-            ...proposed,
-            guardrailDecisions: decisions,
-            status: hasBlock ? 'DENIED' : (hasEscalate ? 'AWAITING_APPROVAL' : 'APPROVED'),
-            finalDecision: hasBlock ? ExecutionDecision.BLOCK : (hasEscalate ? ExecutionDecision.ESCALATE : ExecutionDecision.APPROVE)
-          };
-
-          this.actions.push(action);
-          this.broadcast("action:update", action);
-
-          // 3. WORKFLOW STATE MACHINE (Intelligence Tier owns transitions)
-          if (action.status === 'APPROVED') {
-            this.scheduleExecution(action.id);
-          }
+            // Simulation of Backend Workflow (Automatic execution if state machine allows)
+            if (action.status === 'APPROVED') {
+                this.scheduleExecution(action.id);
+            }
         }
-    } catch (e) {
-        console.error("Upstream Workflow Error:", e);
-    }
+    }, 1000);
 
     return event;
+  }
+
+  /**
+   * MOCK SCENARIO GENERATOR
+   * Instead of AI, return pre-defined enterprise scenarios
+   */
+  private static getMockProposalsForContent(content: string, eventId: string) {
+    const normalized = content.toLowerCase();
+    
+    // Scenario 1: Natural Disaster / Redirect (High Risk)
+    if (normalized.includes("weather") || normalized.includes("delays") || normalized.includes("reroute")) {
+        return [{
+            id: uuidv4(),
+            eventId,
+            toolName: "reroute_shipment",
+            arguments: { shipmentId: "SHIP-992", targetHub: "HUB-ATL-4" },
+            rationale: "Automated routing logic detected corridor blockage due to weather notification.",
+            confidence: 0.94,
+            status: "APPROVED", // Auto-approved by simulated policy
+            guardrailDecisions: [
+                { gate: "GROUNDING", decision: ExecutionDecision.APPROVE, details: "Verified weather telemetry matches coordinates." },
+                { gate: "POLICY", decision: ExecutionDecision.APPROVE, details: "Scenario fits 'Weather Contingency' authorized playbook." }
+            ]
+        }];
+    }
+
+    // Scenario 2: Unauthorized Carrier (Governance Block)
+    if (normalized.includes("carrier") || normalized.includes("switch")) {
+        return [{
+            id: uuidv4(),
+            eventId,
+            toolName: "switch_carrier",
+            arguments: { carrierId: "VENDOR_UNKNOWN_99" },
+            rationale: "Proposed optimization for cost reduction.",
+            confidence: 0.81,
+            status: "DENIED",
+            finalDecision: ExecutionDecision.BLOCK,
+            guardrailDecisions: [
+                { gate: "POLICY", decision: ExecutionDecision.BLOCK, details: "Violation: VENDOR_UNKNOWN_99 is not in the Tier-1 Approved Vendor List." }
+            ]
+        }];
+    }
+
+    // Default: Stakeholder Notification (Low Risk)
+    return [{
+        id: uuidv4(),
+        eventId,
+        toolName: "notify_stakeholders",
+        arguments: { priority: "MEDIUM", message: "Standard operational update processed." },
+        rationale: "Maintaining transparency across supply chain partners.",
+        confidence: 0.99,
+        status: "APPROVED",
+        guardrailDecisions: [
+            { gate: "GROUNDING", decision: ExecutionDecision.APPROVE, details: "Logistics data verified." },
+            { gate: "POLICY", decision: ExecutionDecision.APPROVE, details: "Standard notification protocol followed." }
+        ]
+    }];
   }
 
   static async handleDecision(actionId: string, decision: 'APPROVE' | 'DENIED') {
     const action = this.actions.find(a => a.id === actionId);
     if (!action) return null;
 
-    // INTELLIGENCE TIER DECIDES
+    // Simulate backend processing of human authorization
     action.status = decision === 'APPROVE' ? 'APPROVED' : 'DENIED';
     action.finalDecision = decision === 'APPROVE' ? ExecutionDecision.APPROVE : ExecutionDecision.BLOCK;
     
@@ -108,7 +136,7 @@ export class SpringBootBackendEmulator {
   }
 
   private static scheduleExecution(actionId: string) {
-    // Backend owns the delay/execution logic
+    // Simulated Backend Execution Cycle (2.0s latency)
     setTimeout(() => {
         const action = this.actions.find(a => a.id === actionId);
         if (action && action.status === 'APPROVED') {
@@ -116,39 +144,5 @@ export class SpringBootBackendEmulator {
             this.broadcast("action:update", action);
         }
     }, 2000);
-  }
-
-  /**
-   * Represents: ExecutionGovernanceLayer.java
-   */
-  private static async evaluateGovernance(eventContent: string, action: any, traceId: string) {
-    const genModel = ai.getGenerativeModel({ model: MODAL_ID });
-    const results = [];
-
-    // GATE 1: GROUNDING (AI verification)
-    const g1Response = await genModel.generateContent({
-        contents: [{ role: 'user', parts: [{ text: `Verify if "${action.toolName}" is grounded in "${eventContent}". Output JSON: { "ok": boolean, "reason": string }` }] }],
-        generationConfig: { responseMimeType: "application/json" }
-    });
-    const g1 = JSON.parse(g1Response.response.text());
-    results.push({
-        gate: "GROUNDING",
-        decision: g1.ok ? ExecutionDecision.APPROVE : ExecutionDecision.BLOCK,
-        details: g1.reason
-    });
-
-    // GATE 2: RISK (Deterministic Policy)
-    const approvedCarriers = ["CARRIER_A", "CARRIER_B"];
-    if (action.toolName === "switch_carrier" && !approvedCarriers.includes(action.arguments?.newCarrierId)) {
-        results.push({
-            gate: "POLICY",
-            decision: ExecutionDecision.BLOCK,
-            details: `Unauthorized Carrier: ${action.arguments?.newCarrierId}`
-        });
-    } else {
-        results.push({ gate: "POLICY", decision: ExecutionDecision.APPROVE, details: "Verified Policy Compliance" });
-    }
-
-    return results;
   }
 }
