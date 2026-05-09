@@ -4,7 +4,6 @@ import { Server } from "socket.io";
 import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
-import { v4 as uuidv4 } from "uuid";
 import { SpringBootBackendEmulator, ExecutionDecision } from "./backend/emulator/SpringBootBackendEmulator";
 
 /**
@@ -25,9 +24,6 @@ interface LogisticsEvent {
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'BLOCKED';
 }
 
-const events: LogisticsEvent[] = [];
-const actions: any[] = [];
-
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
@@ -38,45 +34,23 @@ async function startServer() {
 
   app.use(express.json());
 
-  // -- DATA TIER (Proxy to Intelligence Layer) --
+  // -- INFRASTRUCTURE SETUP --
+  // Set up the bridge between the Simulation and the UI
+  SpringBootBackendEmulator.setBroadcastHandler((type, data) => {
+    io.emit(type, data);
+  });
+
+  // -- PRESENTATION API (Stateless Proxies) --
 
   app.post("/api/events", async (req, res) => {
     const { content, source } = req.body;
     
-    // 1. Log Inbound Telemetry
-    const event: LogisticsEvent = { 
-        id: uuidv4(), 
-        timestamp: new Date().toISOString(), 
-        source: source || "Inbound Telemetry", 
-        content, 
-        status: 'PENDING' 
-    };
-    events.push(event);
-    io.emit("event:new", event);
-
-    // 2. FORWARD TO INTELLIGENCE TIER (Spring Boot Control Plane)
-    // In production, this would be: await fetch("http://backend-service:8080/api/v1/events", ...)
+    // FORWARD TO INTELLIGENCE TIER (Asynchronous Entry)
     try {
-        const proposals = await SpringBootBackendEmulator.handleEvent(event.content);
-        
-        // 3. BROADCAST TELEMETRY TO UI
-        for (const p of proposals) {
-            const action = { ...p, eventId: event.id };
-            actions.push(action);
-            io.emit("action:update", action);
-            
-            // Handle auto-execution simulation
-            if (action.status === 'APPROVED') {
-                setTimeout(() => {
-                    action.status = 'EXECUTED';
-                    io.emit("action:update", action);
-                }, 1500);
-            }
-        }
+        const event = await SpringBootBackendEmulator.handleEvent(content, source);
         res.status(201).json(event);
     } catch (e) {
-        console.error("Upstream Control Plane Error:", e);
-        res.status(502).json({ error: "Intelligence Tier Unavailable" });
+        res.status(502).json({ error: "Intelligence Tier Timeout" });
     }
   });
 
@@ -84,27 +58,20 @@ async function startServer() {
     const { id } = req.params;
     const { decision } = req.body;
     
-    // Proxy authorization to upstream
-    const action = actions.find(a => a.id === id);
-    if (!action) return res.status(404).json({ error: "Action target not found" });
-
-    // Inform Intelligence Tier of human decision
-    action.status = decision === 'APPROVE' ? 'APPROVED' : 'DENIED';
-    action.finalDecision = decision === 'APPROVE' ? ExecutionDecision.APPROVE : ExecutionDecision.BLOCK;
-    
-    io.emit("action:update", action);
-    
-    if (action.status === 'APPROVED') {
-        setTimeout(() => {
-            action.status = 'EXECUTED';
-            io.emit("action:update", action);
-        }, 1000);
+    // PROXY HUMAN AUTHORIZATION TO BACKEND
+    try {
+        const updatedAction = await SpringBootBackendEmulator.handleDecision(id, decision);
+        if (!updatedAction) return res.status(404).json({ error: "Action Sync Error" });
+        res.json({ status: "Authorization Transmitted", action: updatedAction });
+    } catch (e) {
+        res.status(500).json({ error: "Upstream Decision Failure" });
     }
-    
-    res.json({ status: "Authorization Transmitted" });
   });
 
-  app.get("/api/data", (req, res) => res.json({ events, actions }));
+  app.get("/api/data", (req, res) => {
+    // FETCH AUTHENTIC STATE FROM BACKEND
+    res.json(SpringBootBackendEmulator.getData());
+  });
 
   // -- ASSET PIPELINE (Infrastructure) --
 
