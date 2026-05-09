@@ -5,17 +5,16 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { createServer as createViteServer } from "vite";
 import { v4 as uuidv4 } from "uuid";
-import { ControlPlane, ExecutionDecision } from "./control-plane";
+import { SpringBootBackendEmulator, ExecutionDecision } from "./backend/emulator/SpringBootBackendEmulator";
 
 /**
- * PRESENTATION LAYER PROXY (NODE/EXPRESS)
+ * TIER 2: INFRASTRUCTURE LAYER (Node/Express Proxy)
  * 
- * Role: 
- * 1. Serves the React Frontend.
- * 2. Proxies client events to the Backend AI Control Plane (Simulated by control-plane.ts).
- * 3. Manages UI-side state and WebSocket broadcasting.
- * 
- * STRICT CONSTRAINT: This file contains NO AI logic, NO prompts, and NO governance rules.
+ * ROLE:
+ * - Serves static assets (Tier 1 UI).
+ * - Manages WebSocket connections for real-time telemetry.
+ * - Proxies event ingestion to the Intelligence Tier (Spring Boot / Emulator).
+ * - STRICTLY AGNOSTIC to business rules and AI logic.
  */
 
 interface LogisticsEvent {
@@ -26,20 +25,8 @@ interface LogisticsEvent {
   status: 'PENDING' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'BLOCKED';
 }
 
-interface Action {
-  id: string;
-  eventId: string;
-  toolName: string;
-  arguments: any;
-  rationale: string;
-  confidence: number;
-  guardrailDecisions: any[];
-  status: 'PROPOSED' | 'APPROVED' | 'DENIED' | 'EXECUTED' | 'AWAITING_APPROVAL';
-  finalDecision: ExecutionDecision;
-}
-
 const events: LogisticsEvent[] = [];
-const actions: Action[] = [];
+const actions: any[] = [];
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -51,72 +38,68 @@ async function startServer() {
 
   app.use(express.json());
 
-  // -- Event Ingestion (Proxy to Control Plane) --
+  // -- API LAYER (Proxy to Backend Control Plane) --
+
   app.post("/api/events", async (req, res) => {
     const { content, source } = req.body;
-    const event: LogisticsEvent = { id: uuidv4(), timestamp: new Date().toISOString(), source: source || "Inbound Telemetry", content, status: 'PENDING' };
+    const event: LogisticsEvent = { 
+        id: uuidv4(), 
+        timestamp: new Date().toISOString(), 
+        source: source || "Inbound Telemetry", 
+        content, 
+        status: 'PENDING' 
+    };
+    
     events.push(event);
     io.emit("event:new", event);
     res.status(201).json(event);
 
-    // DELEGATE TO CONTROL PLANE
-    processWorkflow(event, io);
+    // Delegate and stream results back to UI
+    try {
+        const proposals = await SpringBootBackendEmulator.handleEvent(event.content);
+        for (const p of proposals) {
+            const enrichedAction = { ...p, eventId: event.id };
+            actions.push(enrichedAction);
+            io.emit("action:update", enrichedAction);
+            
+            // Execute mock transition if approved
+            if (enrichedAction.status === 'APPROVED') {
+                setTimeout(() => {
+                    enrichedAction.status = 'EXECUTED';
+                    io.emit("action:update", enrichedAction);
+                }, 2000);
+            }
+        }
+    } catch (e) {
+        console.error("Backend Proxy Error:", e);
+    }
   });
 
   app.get("/api/data", (req, res) => res.json({ events, actions }));
 
-  // -- Human-in-the-loop Proxy --
   app.post("/api/actions/:id/decide", async (req, res) => {
     const { id } = req.params;
     const { decision } = req.body;
-    
     const action = actions.find(a => a.id === id);
-    if (!action) return res.status(404).json({ error: "Action not found" });
+    if (!action) return res.status(404).json({ error: "Not found" });
 
-    // In a real system, this sends an authorization token back to the Java Control Plane
     if (decision === 'APPROVE') {
       action.status = 'APPROVED';
       action.finalDecision = ExecutionDecision.APPROVE;
       io.emit("action:update", action);
-      
-      await new Promise(r => setTimeout(r, 1000));
-      action.status = 'EXECUTED';
+      setTimeout(() => {
+        action.status = 'EXECUTED';
+        io.emit("action:update", action);
+      }, 1000);
     } else {
       action.status = 'DENIED';
       action.finalDecision = ExecutionDecision.BLOCK;
+      io.emit("action:update", action);
     }
-
-    io.emit("action:update", action);
     res.json(action);
   });
 
-  async function processWorkflow(event: LogisticsEvent, io: Server) {
-    try {
-      // Direct call to simulated Backend Control Plane
-      const backendActions = await ControlPlane.processEvent(event.content);
-
-      for (const bAction of backendActions) {
-        const action: Action = {
-          ...bAction,
-          eventId: event.id,
-          finalDecision: bAction.status === 'DENIED' ? ExecutionDecision.BLOCK : 
-                        bAction.status === 'AWAITING_APPROVAL' ? ExecutionDecision.ESCALATE : 
-                        ExecutionDecision.APPROVE
-        };
-        actions.push(action);
-        io.emit("action:update", action);
-
-        // Simulation of Execution phase if approved
-        if (action.status === 'APPROVED') {
-          await new Promise(r => setTimeout(r, 1500));
-          action.status = 'EXECUTED';
-          io.emit("action:update", action);
-        }
-      }
-    } catch (e) {
-      console.error("Control Plane Pipeline Error:", e);
-    }
-  }
+  // -- ASSET PIPELINE (Infrastructure) --
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({ server: { middlewareMode: true }, appType: "spa" });
@@ -128,9 +111,10 @@ async function startServer() {
   }
 
   httpServer.listen(3000, "0.0.0.0", () => {
-    console.log("Logistics Dashboard Entry Point: http://localhost:3000");
-    console.log("Backend Control Plane Status: INTERCEPTING");
+    console.log("Infrastructure Proxy: http://localhost:3000");
+    console.log("Status: READY - Forwarding to Intelligence Tier");
   });
 }
 
 startServer();
+
